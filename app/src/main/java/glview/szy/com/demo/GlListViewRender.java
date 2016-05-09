@@ -33,6 +33,7 @@ public class GlListViewRender implements GLSurfaceView.Renderer {
     private Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private Paint clearPaint = new Paint();
     private Context mContext;
+    private GLSurfaceView mView;
     private static float SIZE = 256f;
     private static int TEXT_SIZE = 30;
     private int mWidth;
@@ -50,6 +51,9 @@ public class GlListViewRender implements GLSurfaceView.Renderer {
     private Canvas mCanvas;
 
     private static long mLastTime = 0;
+
+    private boolean loadbackground = false;
+    private int mTop = 0;
 
     private static final int[] PICS = new int[] {
             R.drawable.app0,
@@ -79,9 +83,9 @@ public class GlListViewRender implements GLSurfaceView.Renderer {
         mLastTime = System.currentTimeMillis();
     }
 
-    public GlListViewRender(Context context) {
+    public GlListViewRender(Context context, GLSurfaceView view) {
         mContext = context;
-
+        mView = view;
         trimTime("GlListViewRender");
     }
 
@@ -135,10 +139,10 @@ public class GlListViewRender implements GLSurfaceView.Renderer {
         gl.glMatrixMode(GL10.GL_PROJECTION);
         gl.glLoadIdentity();
         gl.glOrthof(0, width, 0, height, 1, -1);
-        gl.glEnable(GL10.GL_BLEND);
-        gl.glBlendFunc(GL10.GL_SRC_ALPHA, GL10.GL_ONE_MINUS_SRC_ALPHA);
+//        gl.glEnable(GL10.GL_BLEND);
+//        gl.glBlendFunc(GL10.GL_SRC_ALPHA, GL10.GL_ONE_MINUS_SRC_ALPHA);
 
-        test(gl);
+        initData(gl);
 
         mLastVisible = (mFirstVisible + mHeight / ITEM_SIZE
                 + (mHeight % ITEM_SIZE == 0 ? 0 : 1)) * 2;
@@ -156,7 +160,7 @@ public class GlListViewRender implements GLSurfaceView.Renderer {
         LogUtils.log("size", "fist = " + mFirstVisible + "  last = " + mLastVisible);
     }
 
-    private void test(GL10 gl) {
+    private void initData(GL10 gl) {
         trimTime("test start");
         mItemSize = 1000;
         for (int i = 0; i < mItemSize / 2; i++) {
@@ -170,18 +174,22 @@ public class GlListViewRender implements GLSurfaceView.Renderer {
     @Override
     public synchronized void onDrawFrame(GL10 gl) {
         trimTime("onDrawFrame start");
-        gl.glClear(GL10.GL_COLOR_BUFFER_BIT);
+        if (!loadbackground) {
+            gl.glClear(GL10.GL_COLOR_BUFFER_BIT);
 
-        gl.glTranslatef(0, mOffsetY, 0);
-        mTotalOffsetY += mOffsetY;
-        updateVisible();
+            gl.glTranslatef(0, mOffsetY, 0);
+            mTotalOffsetY += mOffsetY;
+            updateVisible();
 
-        for (int i = mFirstVisible; i < mLastVisible; i++)
-        {
-            drawItem(gl, i);
+            for (int i = mFirstVisible; i < mLastVisible; i++)
+            {
+                drawItem(gl, i);
+            }
+
+            LogUtils.log("off", "onDrawFrame ======= " + mTotalOffsetY);
+        } else {
+            loadNextPageItem(gl, 6);
         }
-
-        LogUtils.log("off", "onDrawFrame ======= " + mTotalOffsetY);
         trimTime("onDrawFrame stop");
     }
 
@@ -192,15 +200,21 @@ public class GlListViewRender implements GLSurfaceView.Renderer {
 
         gl.glEnableClientState(GL10.GL_VERTEX_ARRAY);
         gl.glVertexPointer(2, GL10.GL_FLOAT, 0, mInputVertices.get(i));
-        gl.glEnable(GL10.GL_TEXTURE_2D);
-        gl.glActiveTexture(GL10.GL_TEXTURE0);
-        gl.glBindTexture(GL10.GL_TEXTURE_2D, mInputTextures.get(i));
-        gl.glTexParameterx(GL10.GL_TEXTURE_2D, GL10.GL_TEXTURE_WRAP_S,
-                GL10.GL_REPEAT);
-        gl.glTexParameterx(GL10.GL_TEXTURE_2D, GL10.GL_TEXTURE_WRAP_T,
-                GL10.GL_REPEAT);
-        gl.glEnableClientState(GL10.GL_TEXTURE_COORD_ARRAY);
-        gl.glTexCoordPointer(2, GL10.GL_FLOAT, 0, mColorBuffer);
+
+        int texture = mInputTextures.get(i);
+        if (texture >= 0) {
+            gl.glEnable(GL10.GL_TEXTURE_2D);
+            gl.glActiveTexture(GL10.GL_TEXTURE0);
+            gl.glBindTexture(GL10.GL_TEXTURE_2D, mInputTextures.get(i));
+            gl.glTexParameterx(GL10.GL_TEXTURE_2D, GL10.GL_TEXTURE_WRAP_S,
+                    GL10.GL_REPEAT);
+            gl.glTexParameterx(GL10.GL_TEXTURE_2D, GL10.GL_TEXTURE_WRAP_T,
+                    GL10.GL_REPEAT);
+            gl.glEnableClientState(GL10.GL_TEXTURE_COORD_ARRAY);
+            gl.glTexCoordPointer(2, GL10.GL_FLOAT, 0, mColorBuffer);
+        } else {
+            asyncLoadTexture(gl, i);
+        }
 
         gl.glDrawArrays(GL10.GL_TRIANGLES, 0, 3);
         gl.glDrawArrays(GL10.GL_TRIANGLES, 1, 3);
@@ -208,6 +222,10 @@ public class GlListViewRender implements GLSurfaceView.Renderer {
 
     public int initTextureId(GL10 gl, Drawable drawable, String title)
     {
+        if (drawable == null) {
+            return -1;
+        }
+
         int[] textures = new int[1];
         gl.glGenTextures(1, textures, 0);
         int curId = textures[0];
@@ -229,6 +247,7 @@ public class GlListViewRender implements GLSurfaceView.Renderer {
                 new Rect(0, 0, (int) SIZE, (int) SIZE), null);
         mCanvas.drawText(title, 25, SIZE + TEXT_SIZE, textPaint);
         GLUtils.texImage2D(GL10.GL_TEXTURE_2D, 0, mItemBmp, 0);
+        ++mTop;
 
         return curId;
     }
@@ -260,9 +279,12 @@ public class GlListViewRender implements GLSurfaceView.Renderer {
         vertices.flip();
         mInputVertices.add(vertices);
 
+//        mInputTextures.add(initTextureId(gl,
+//                mContext.getResources().getDrawable(PICS[(row * 2 + col)
+//                        % PICS.length]), "test-" + row + "-" + col));
+
         mInputTextures.add(initTextureId(gl,
-                mContext.getResources().getDrawable(PICS[(row * 2 + col) % PICS.length]),
-                "test-" + row + "-" + col));
+                null, "test-" + row + "-" + col));
     }
 
     public synchronized void move(int offset) {
@@ -277,5 +299,50 @@ public class GlListViewRender implements GLSurfaceView.Renderer {
 
     public int getMaxHeight() {
         return (int) (mInputVertices.size() * (TEXT_SIZE + SIZE) / 2) - mHeight;
+    }
+
+    private void asyncLoadTexture(final GL10 gl, final int i) {
+        mView.queueEvent(new Runnable() {
+            @Override
+            public void run() {
+                int id = initTextureId(gl,
+                        mContext.getResources().getDrawable(PICS[
+                                i % PICS.length]), "test-" + i + "-" + i);
+                if (id > 0) {
+                    mInputTextures.add(i, id);
+
+                    mView.requestRender();
+                }
+            }
+        });
+    }
+
+    public void loadNextPage() {
+        loadbackground = true;
+        mView.requestRender();
+    }
+
+    private void loadNextPageItem(final GL10 gl, final int size) {
+        mView.queueEvent(new Runnable() {
+            @Override
+            public void run() {
+                for (int i = 0; i < size; i++) {
+                    if (mTop + i < mInputTextures.size()
+                            && mInputTextures.get(mTop + 1) == null) {
+                        int id = initTextureId(gl,
+                                mContext.getResources().getDrawable(PICS[
+                                        (mTop + i) % PICS.length]),
+                                "test-" + (mTop + i) + "-" + (mTop + i));
+                        if (id > 0) {
+                            mInputTextures.add(mTop + i, id);
+
+                            mView.requestRender();
+                        }
+                    }
+                }
+
+                loadbackground = false;
+            }
+        });
     }
 }

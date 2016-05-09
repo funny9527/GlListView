@@ -47,7 +47,7 @@ public class GlListView extends GLSurfaceView {
     }
 
     private void init() {
-        mRender = new GlListViewRender(getContext());
+        mRender = new GlListViewRender(getContext(), this);
         setRenderer(mRender);
         setRenderMode(GLSurfaceView.RENDERMODE_WHEN_DIRTY);
         mScroller = new Scroller(getContext(), new ScrollInterpolator());
@@ -169,11 +169,14 @@ public class GlListView extends GLSurfaceView {
 
     @Override
     public void computeScroll() {
-        LogUtils.log("computeScroll");
         if (mScroller.computeScrollOffset()) {
+            LogUtils.log("anim", "computeScroll moving");
             int currenty = mScroller.getCurrY();
             moveFling(currenty);
             invalidate();
+        } else {
+            LogUtils.log("anim", "computeScroll end");
+            mRender.loadNextPage();
         }
     }
 
